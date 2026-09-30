@@ -154,6 +154,14 @@ tr:hover { background:var(--surface2); }
   <div class="section-header">
     <h2>Trades <span style="color:var(--text3);font-weight:400;font-size:12px;" id="tradeCount"></span></h2>
     <div class="filters">
+      <input type="date" id="tradeFrom" onchange="filterTrades('all')" title="From" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:8px;font-size:12px;width:135px;">
+      <input type="date" id="tradeTo" onchange="filterTrades('all')" title="To" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:8px;font-size:12px;width:135px;">
+      <button class="btn" onclick="clearTradeDates()">Clear Dates</button>
+    </div>
+  </div>
+  <div class="section-header" style="border-top:1px solid var(--border);">
+    <h2 style="font-size:13px;">Filters:</h2>
+    <div class="filters">
       <button class="btn active" onclick="filterTrades('all')">All</button>
       <button class="btn" onclick="filterTrades('best')">Best 20</button>
       <button class="btn" onclick="filterTrades('worst')">Worst 20</button>
@@ -162,6 +170,7 @@ tr:hover { background:var(--surface2); }
       <button class="btn" onclick="filterTrades('crash')">Crash</button>
     </div>
   </div>
+  <div id="tradeSummary" style="padding:12px 20px;display:flex;gap:32px;flex-wrap:wrap;border-bottom:1px solid var(--border);font-size:13px;"></div>
   <div class="table-wrap" style="max-height:560px;">
     <table id="tradeTable">
       <thead><tr>
@@ -172,7 +181,41 @@ tr:hover { background:var(--surface2); }
   </div>
 </div>
 
+
+<!-- Daily / Date-Filtered Trades -->
+<div class="section" id="daily">
+  <div class="section-header">
+    <h2>Daily / Weekly Trades <span style="color:var(--text3);font-weight:400;font-size:12px;" id="dailyCount"></span></h2>
+    <div class="filters">
+      <input type="date" id="dailyDate" onchange="setDailyDate(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:8px;font-size:12px;">
+      <button class="btn" onclick="dailyRange('week')">This Week</button>
+      <button class="btn" onclick="dailyRange('month')">This Month</button>
+      <button class="btn" onclick="dailyRange('all')">All</button>
+    </div>
+  </div>
+  <div class="table-wrap" style="max-height:600px;">
+    <table id="dailyTable">
+      <thead><tr>
+        <th>Date</th><th>Trades</th><th>Net P&L ($)</th><th>Shares Bought</th><th>Avg Win $</th><th>Avg Loss $</th><th>Win Rate</th>
+      </tr></thead>
+      <tbody id="dailyBody"></tbody>
+    </table>
+  </div>
+  <div class="section-header" style="border-top:1px solid var(--border);">
+    <h2 style="font-size:13px;">Trades on selected date</h2>
+  </div>
+  <div class="table-wrap" style="max-height:480px;">
+    <table id="dailyDetailTable">
+      <thead><tr>
+        <th>Ticker</th><th>Shares</th><th>Entry $</th><th>Exit $</th><th>P&L $</th><th>Regime</th><th>Exit Reason</th><th>Days</th>
+      </tr></thead>
+      <tbody id="dailyDetailBody"></tbody>
+    </table>
+  </div>
+</div>
+
 <div class="footer">
+
   AI Trading Rulebook v9.1 · Regime-Adaptive Momentum Strategy · $100K Starting Capital · 147 S&P 500 Stocks · 0.05% Slippage<br>
   All figures are hypothetical — not investment advice · Backtest period: Jan 2000 – Sep 2026
 </div>
@@ -329,8 +372,22 @@ function renderMonthFilters() {
 // Trades table
 let tradeFilter = 'all';
 function filterTrades(f) { tradeFilter = f; renderTrades(); }
+function clearTradeDates() {
+  document.getElementById('tradeFrom').value = '';
+  document.getElementById('tradeTo').value = '';
+  renderTrades();
+}
 function renderTrades() {
+  const from = document.getElementById('tradeFrom') ? document.getElementById('tradeFrom').value : '';
+  const to = document.getElementById('tradeTo') ? document.getElementById('tradeTo').value : '';
   let trades = DATA.trades.slice();
+  if (from || to) {
+    trades = trades.filter(t => {
+      if (from && t.entry_date < from) return false;
+      if (to && t.entry_date > to) return false;
+      return true;
+    });
+  }
   if (tradeFilter === 'best') trades = trades.sort((a, b) => b.pnl - a.pnl).slice(0, 20);
   else if (tradeFilter === 'worst') trades = trades.sort((a, b) => a.pnl - b.pnl).slice(0, 20);
   else if (tradeFilter === 'bull') trades = trades.filter(t => t.regime === 'bull');
@@ -338,10 +395,21 @@ function renderTrades() {
   else if (tradeFilter === 'crash') trades = trades.filter(t => t.regime === 'crash');
   else trades = trades.sort((a, b) => b.pnl - a.pnl);
 
+  const net = trades.reduce((s, t) => s + t.pnl, 0);
+  const shares = trades.reduce((s, t) => s + t.units, 0);
+  const wins = trades.filter(t => t.pnl > 0).length;
+  const wr = trades.length ? (wins / trades.length * 100).toFixed(1) + '%' : '—';
+  document.getElementById('tradeSummary').innerHTML =
+    `<span>Net P&L: <b class="t-pnl ${cls(net)}">${net >= 0 ? '+' : ''}${fmt(net)}</b></span>` +
+    `<span>Total Shares: <b>${shares.toLocaleString()}</b></span>` +
+    `<span>Win Rate: <b>${wr}</b></span>` +
+    `<span>Trades: <b>${trades.length}</b></span>`;
+
   document.getElementById('tradeCount').textContent = `· ${trades.length} trades shown`;
   document.getElementById('tradeBody').innerHTML = trades.map((t, i) => `<tr>
     <td>${i + 1}</td>
     <td><b>${t.ticker}</b></td>
+    <td>${t.units.toLocaleString()}</td>
     <td>${t.entry.toFixed(2)}</td>
     <td>${t.exit.toFixed(2)}</td>
     <td class="t-pnl ${cls(t.pnl)}">${t.pnl >= 0 ? '+' : ''}${fmt(t.pnl)}</td>
@@ -353,12 +421,99 @@ function renderTrades() {
   </tr>`).join('');
 }
 
+// Daily / date-filtered trades
+let dailyMode = 'all'; let dailyDateStr = '';
+const tset = DATA.trades;
+
+function setDailyDate(d) {
+  dailyDateStr = d;
+  dailyMode = 'day';
+  // highlight the button state
+  document.querySelectorAll('#daily .filters .btn').forEach(b => b.classList.remove('active'));
+  renderDaily();
+}
+function dailyRange(m) {
+  dailyMode = m; dailyDateStr = '';
+  document.querySelectorAll('#daily .filters .btn').forEach(b => b.classList.remove('active'));
+  if (event && event.target) event.target.classList.add('active');
+  renderDaily();
+}
+
+// Group trades into days by entry_date (or exit_date for a fuller picture — use entry)
+function renderDaily() {
+  // Build day buckets
+  const buckets = {};
+  tset.forEach(t => {
+    const d = t.entry_date;
+    if (dailyMode === 'day' && dailyDateStr && d !== dailyDateStr) return;
+    if (dailyMode === 'week' && dailyDateStr) {
+      // week containing dailyDateStr
+      const ref = new Date(dailyDateStr + 'T00:00:00');
+      const start = new Date(ref); start.setDate(ref.getDate() - ref.getDay());
+      const end = new Date(start); end.setDate(start.getDate() + 6);
+      const dd = new Date(d + 'T00:00:00');
+      if (dd < start || dd > end) return;
+    }
+    if (dailyMode === 'month' && dailyDateStr) {
+      const m = dailyDateStr.slice(0, 7);
+      if (!d.startsWith(m)) return;
+    }
+    if (!buckets[d]) buckets[d] = [];
+    buckets[d].push(t);
+  });
+
+  const days = Object.keys(buckets).sort();
+  const maxPnl = Math.max(1, ...days.map(d => Math.abs(buckets[d].reduce((s, t) => s + t.pnl, 0))));
+
+  document.getElementById('dailyCount').textContent = '· ' + days.length + ' days' + (dailyMode === 'all' ? '' : ' · ' + dailyMode);
+
+  document.getElementById('dailyBody').innerHTML = days.map(d => {
+    const ts = buckets[d];
+    const net = ts.reduce((s, t) => s + t.pnl, 0);
+    const shares = ts.reduce((s, t) => s + t.units, 0);
+    const wins = ts.filter(t => t.pnl > 0);
+    const losses = ts.filter(t => t.pnl < 0);
+    const avgWin = wins.length ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0;
+    const avgLoss = losses.length ? losses.reduce((s, t) => s + t.pnl, 0) / losses.length : 0;
+    const wr = ts.length ? (wins.length / ts.length * 100).toFixed(0) + '%' : '—';
+    const barW = Math.abs(net) / maxPnl * 80;
+    return `<tr style="cursor:pointer;" onclick="showDayDetails('${d}')">
+      <td><b>${d}</b></td>
+      <td>${ts.length}</td>
+      <td class="t-pnl ${cls(net)}">${net >= 0 ? '+' : ''}${fmt(net)}</td>
+      <td>${shares.toLocaleString()}</td>
+      <td class="t-pnl pos">${avgWin ? fmt(avgWin) : '—'}</td>
+      <td class="t-pnl neg">${avgLoss ? fmt(avgLoss) : '—'}</td>
+      <td>${wr}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" style="color:var(--text3);text-align:center;padding:24px;">No trades for this selection</td></tr>';
+}
+
+let selectedDay = '';
+function showDayDetails(d) {
+  selectedDay = d;
+  const ts = tset.filter(t => t.entry_date === d).sort((a, b) => b.pnl - a.pnl);
+  document.getElementById('dailyDetailBody').innerHTML = ts.map(t => `<tr>
+    <td><b>${t.ticker}</b></td>
+    <td>${t.units.toLocaleString()}</td>
+    <td>${t.entry.toFixed(2)}</td>
+    <td>${t.exit.toFixed(2)}</td>
+    <td class="t-pnl ${cls(t.pnl)}">${t.pnl >= 0 ? '+' : ''}${fmt(t.pnl)}</td>
+    <td><span class="regime-badge r-${t.regime}">${t.regime}</span></td>
+    <td>${t.exit_reason || '—'}</td>
+    <td>${t.days_held || 0}d</td>
+  </tr>`).join('') || '<tr><td colspan="8" style="color:var(--text3);text-align:center;padding:24px;">Click a date above to see its trades</td></tr>';
+}
+
+
 // Init
 renderKPIs();
 renderAnnual();
 renderMonthly();
 renderMonthFilters();
 renderTrades();
+renderDaily();
+showDayDetails("");
 drawChart();
 window.addEventListener('resize', drawChart);
 </script>
